@@ -1,0 +1,17 @@
+# R specific
+.Rhistory
+.RData
+.Rproj.user/
+
+# Data folders
+data/raw/
+data/processed/*.csv
+
+# Logs, cache
+*.log
+*.rds
+*.Rcache
+
+# OS generated files
+.DS_Store
+Thumbs.db

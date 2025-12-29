@@ -1,0 +1,466 @@
+---
+title: "Prepare Dataset for Greenspace Exposure and Physical Activity"
+author: "Surakshya Dhakal"
+date: "2025-02-04"
+output: html_document
+---
+
+<!--
+NOTE:
+
+This RMarkdown documents the exploratory and integration steps used to
+construct an analysis-ready dataset combining greenspace exposure,
+physical activity, and survey profile data.
+
+It is designed for clarity and transparency, showing all intermediate steps,
+checks, and summaries for readers and reviewers.
+
+For reproducibility and automation, all key steps have been modularized into R scripts under the /R directory, which can be executed automatically via the `run_pipeline.R` script:
+
+- `R/load_packages.R`    : Install and load all required R packages
+- `R/read_data.R`        : Load raw datasets (`spe`, `grnsp`, `pa`)
+- `R/clean_greenspace.R` : Compute greenspace exposure variables
+- `R/prepare_pa_data.R`  : Filter, summarize, and clean physical activity data
+- `R/merge_data.R`       : Merge greenspace, physical activity, and survey profile datasets
+- `R/recode_variables.R` : Recategorize variables for analysis
+- `R/save_data.R`        : Save final analysis-ready dataset
+
+The fully automated pipeline is run via:
+`source("run_pipeline.R")` 
+
+This approach is taken to keep the notebook readable while separating the automated pipeline.
+-->
+
+
+# Summary of work done
+
+Here’s a bullet-point summary of the critical steps taken in the script:
+
+- **Examine Dataset Structure**:  
+  - Checked the structure of the datasets (`spe`, `grnsp`, `pa`) using `str()` to understand the variables and data types.
+
+- **Identify Unique Subjects**:  
+  - Counted the unique subjects across the datasets to compare which subjects overlap in the greenspace exposure and physical activity datasets.
+
+- **Check for Subjects with Both Greenspace and Physical Activity Data**:  
+  - Identified subjects who have data in both physical activity (`pa`) and greenspace exposure (`grnsp`).
+
+- **Check for Subjects with Only Greenspace Data**:  
+  - Found subjects who have greenspace exposure data but do not have physical activity data.
+
+- **Identify Subjects Missing in Survey Profile Dataset**:  
+  - Checked for subjects who are in the greenspace and physical activity datasets but not in the survey profile dataset (`spe`).
+
+- **Prepare Greenspace Exposure Data**:  
+  - Created a new column `grn_exp` by subtracting "other_green" from "total_green".
+  - Created a new column `gps_t_min` by subtracting "other_green" and "other_gray" from "total_green" and "total_gray".
+  - Subset the greenspace exposure data to only include `SubjectID`, `date`, `grn_exp` and `gps_t_min`.
+
+- **Prepare Physical Activity Data**:  
+  - Subset the physical activity data to include relevant columns (`SubjectID`, `start_date`, `start_time`, etc.).
+  - Reformatted date and time columns.
+  - Sorted the physical activity data by `SubjectID`.
+
+- **Handle Duplicates**:  
+  - Identified and documented duplicates in the physical activity dataset, where multiple step counts are recorded for the same time intervals.
+  - Clarified that these aren't true duplicates and all records should be kept.
+  - Exported duplicate summaries for further inspection.
+
+- **Filter and Clean Physical Activity Data**:  
+  - Filtered physical activity data to only include time intervals between 08:00:00 and 22:00:00.
+  - Summarized total steps per subject per day.
+  - Summarized total wear time per subject per day.
+  - Merged the summarized data with the original filtered physical activity data.
+
+- **Merge Greenspace Exposure and Physical Activity Data**:  
+  - Merged the greenspace exposure data (`grnsp_sub`) with the filtered physical activity data (`pa_sub_filtered`) on `SubjectID` and `date`.
+
+- **Merge Survey Profile Data**:  
+  - Cleaned the survey profile data (`spe`) by removing unnecessary columns and rearranging to move `age` after `SubjectID`.
+  - Merged the cleaned survey profile data with the previously merged dataset.
+  
+- **Add Season and Weekday/Weekend Labels**:
+  - Added columns for the day of the week and season (Winter, Spring, Summer, Autumn).
+  - Rearranged columns for clarity.
+  
+- **Recategorize Employment, Income, Education, and Remote Work**:
+  - Recategorized employment, income, education, and remote_work into broader categories for analysis.
+
+- **Final Data Cleaning**:
+  - Retained only necessary columns for the analysis.
+  - Renamed the `start_date` column to `date` in the final dataset.
+  - Sorted the data by `SubjectID` and `date` in ascending order.
+
+- **Export Final Data**:  
+  - Saved the final merged dataset to a CSV file for further analysis.
+
+
+This RMarkdown file is intended for **exploratory and integration work**.  
+
+For reproducibility and automation, all steps in this notebook have been modularized into R scripts under `/R` and can be executed sequentially using the `run_pipeline.R` script. This allows creating the same final dataset without running the notebook interactively.
+
+
+
+# Load Packages and Set-up Working Directory
+
+Install and load packages if required
+```{r, warning=FALSE}
+if (!require("pacman")) install.packages("pacman")
+pacman::p_load("tidyverse", "lessR", "DescTools", "kableExtra", "lubridate", "chron", "sf", "leaflet", "ggplot2", "here")
+```
+
+
+# Read in datasets
+
+```{r read_data, eval=FALSE}
+# Note: The raw datasets are not included in this repo.
+# The code below shows how the datasets would be read and structured.
+
+# Survey/profile dataset
+spe <- read.csv("data/raw/survey_profile.csv", header = TRUE)
+
+# Greenspace exposure dataset
+grnsp <- read.csv("data/raw/greenspace_exposure.csv", header = TRUE)
+
+# Physical activity dataset
+pa <- read.csv("data/raw/physical_activity.csv", header = TRUE)
+```
+
+
+```{r eval=FALSE, include=FALSE}
+# Examine the data structure
+str(spe)
+str(grnsp)
+str(pa)
+```
+
+
+## Examine datasets
+```{r}
+length(unique(spe$SubjectID))     # 271 unique subjects
+length(unique(grnsp$SubjectID))   # 273 unique subjects
+length(unique(pa$SubjectID))      # 127 unique subjects
+```
+
+
+```{r}
+# Subjects who have physical activity data that also have greenspace exposure data
+a <- unique(pa$SubjectID)
+b <- unique(pa$SubjectID) %in% unique(grnsp$SubjectID)
+table(b)
+sort(a[b == TRUE])
+```
+
+
+```{r}
+# Subjects who have greenspace exposure data but not physical activity data
+a <- unique(grnsp$SubjectID)
+b <- unique(grnsp$SubjectID) %in% unique(pa$SubjectID)
+table(b)
+sort(a[b == FALSE])
+```
+
+
+```{r}
+# Subjects not in subject profile dataset but in greenspace exposure dataset
+sort(unique(grnsp$SubjectID)[unique(grnsp$SubjectID) %in% unique(spe$SubjectID) == FALSE])
+```
+
+
+```{r}
+# Subjects not in subject profile dataset but in physical activity dataset
+sort(unique(pa$SubjectID)[unique(pa$SubjectID) %in% unique(spe$SubjectID) == FALSE])
+```
+
+
+## Prepare greenspace data
+
+```{r}
+# Compute greenspace exposure variables
+# (see R/clean_greenspace.R for details)
+source(here::here("R", "clean_greenspace.R"))
+grnsp <- compute_greenspace_exposure(grnsp)
+
+# Keep only "SubjectID", "date", "grn_exp", and "gps_t"
+grnsp_sub <- grnsp[, c(2, 3, 20, 21)]
+```
+
+
+## Prepare physical activity data
+
+```{r}
+# Subset the dataset to keep "SubjectID", "start_date", "start_time"
+# "end_date", "newendtime", "newsteps", and "newdurationInSeconds"
+
+pa_sub <- pa[, c(1:4, 19, 18, 17)]
+
+
+# Reformat date and time
+pa_sub <- pa_sub %>%
+  mutate(start_date = as.Date(start_date, "%Y-%m-%d"),
+         end_date = as.Date(end_date, "%Y-%m-%d"),
+         start_time = chron(times = start_time),
+         end_time = chron(times = newendtime)) %>%
+  select(1:4, 8, 7, 6)   # remove "newendtime" as we are storing it with a new name
+
+
+# Sort data by SubjectID
+pa_sub <- pa_sub[order(pa_sub$SubjectID), ]   # Warning: data contains duplicates 
+```
+
+
+### Checking for duplicates
+Finding: These aren't true duplicates but rather different number of steps for different activity types within the same time intervals. So, we should keep all records. 
+
+```{r eval=FALSE}
+# Check for duplicates
+
+# Convert start_time to POSIXct for proper datetime operations
+pa1 <- pa %>%
+  mutate(start_datetime = ymd(start_date) + hms(start_time))
+
+# Identify duplicates
+duplicates <- pa1 %>%
+  group_by(SubjectID, start_datetime) %>%
+  filter(n() > 1) %>%
+  ungroup()
+
+# Remove pa1
+rm(pa1)
+
+# Count how many subjects have duplicates
+num_subjects_with_duplicates <- duplicates %>%
+  distinct(SubjectID) %>%
+  nrow()
+
+# Count duplicates per subject and date
+duplicate_summary <- duplicates %>%
+  group_by(SubjectID, start_date) %>%
+  summarise(duplicate_count = n(), .groups = "drop")
+
+# Save the duplicate summary to a CSV file
+write.csv(duplicate_summary, "data/processed/duplicates_summary.csv", row.names = FALSE)
+
+# View results
+# print(num_subjects_with_duplicates)  # Number of subjects with duplicates
+# print(duplicate_summary)  # Subjects and dates with duplicate records
+
+dup_sum <- read.csv("data/processed/duplicates_summary.csv", header=TRUE)
+
+```
+
+
+```{r eval=FALSE}
+# Examine a few Subjects more closely
+
+set.seed(123)  # Set seed for reproducibility
+
+# Get a list of unique subjects with duplicates
+subjects_with_duplicates <- duplicates %>%
+  distinct(SubjectID) %>%
+  pull(SubjectID)
+
+# Randomly select two subjects
+random_subjects <- sample(subjects_with_duplicates, 2)
+
+# Filter duplicates for the selected subjects
+example_duplicates <- duplicates %>%
+  filter(SubjectID %in% random_subjects)
+
+# Save to CSV
+write.csv(example_duplicates, "data/processed/example_duplicates.csv", row.names = FALSE)
+
+# Print selected subjects
+# print(random_subjects)
+
+```
+
+
+## Prepare physical activity data (contd.)
+
+```{r}
+# Keep time intervals between 08:00:00 and 22:00:00
+
+# Convert start_time to a proper time format
+pa_sub <- pa_sub %>%
+  mutate(start_time = hms(start_time)) 
+
+# Filter data for time between 08:00:00 and 22:00:00
+pa_sub_filtered <- pa_sub %>%
+  filter(start_time >= hms("08:00:00") & start_time < hms("22:00:00"))
+
+# Summarize total steps per subject per day
+daily_steps <- pa_sub_filtered %>%
+  group_by(SubjectID, start_date) %>%
+  summarise(total_steps = sum(newsteps, na.rm = TRUE), .groups = "drop")
+
+# Summarize wear time per subject per day (counting each unique start_time once)
+daily_wear_time <- pa_sub_filtered %>%
+  group_by(SubjectID, start_date, start_time) %>%
+  summarise(wear_time_per_interval = first(newdurationInSeconds), .groups = "drop") %>%
+  group_by(SubjectID, start_date) %>%
+  summarise(wear_t_hr = round(sum(wear_time_per_interval, na.rm = TRUE) / 3600, 2), .groups = "drop")
+
+# Merge total steps and wear time back into "pa_sub_filtered", ensuring only one row per subject per day
+pa_sub_filtered <- pa_sub_filtered %>%
+  distinct(SubjectID, start_date, .keep_all = TRUE) %>%
+  left_join(daily_wear_time, by = c("SubjectID", "start_date")) %>%
+  left_join(daily_steps, by = c("SubjectID", "start_date"))
+  
+
+# Keep only "SubjectID", "start_date", "wear_t_hr", and "total_steps"
+pa_sub_filtered <- pa_sub_filtered[, c(1, 2, 8, 9)]
+
+```
+
+
+
+# Merge greenspace exposure and survey profile data to physical activity
+
+```{r}
+# Merge greenspace exposure data to physical activity
+
+# Convert "date" to Date type in both datasets
+pa_sub_filtered <- pa_sub_filtered %>%
+  mutate(start_date = as.Date(start_date))
+
+grnsp_sub <- grnsp_sub %>%
+  mutate(date = as.Date(date))
+
+# Merge the two datasets based on SubjectID while matching the date
+merged_df <- pa_sub_filtered %>%
+  left_join(grnsp_sub, by = c("SubjectID" = "SubjectID", "start_date" = "date"))
+
+# View the merged dataframe
+# head(merged_df)
+```
+
+
+```{r}
+# Merge survey profile data to merged_df
+
+# Remove the columns that are not needed
+spe_clean <- spe %>%
+  select(-birth_date, -recruited_by, -recruited_by_code)
+
+# Rearrange the columns to move 'age' after 'SubjectID'
+spe_clean <- spe_clean %>%
+  select(SubjectID, enrollment_date, age, everything())
+
+# Rename the column 'enrollment_date' to 'enrl_date'
+spe_clean <- spe_clean %>%
+  dplyr::rename(enrl_date = enrollment_date)
+
+# Reformat date and time
+spe_clean <- spe_clean %>%
+  mutate(enrl_date = as.Date(enrl_date, "%Y-%m-%d"))
+
+# Merge with the previous dataframe (merged_df)
+final_df <- merged_df %>%
+  left_join(spe_clean, by = "SubjectID")
+
+# View the final merged dataframe
+# head(final_df)
+
+## Rearrange columns
+final_df <- final_df[, c(1, 7, 2:6, 8:22)]
+
+```
+
+
+```{r}
+# Add season and weekday/weekend labels as separate columns
+
+## Add weekday labels
+final_df$wk_day <- wday(final_df$start_date, label = TRUE)   
+
+## Rearrange columns
+final_df <- final_df[, c(1:3, 23, 4:22)]
+
+## Add season labels
+final_df <- final_df %>%
+  mutate(season = case_when(
+    month(start_date) %in% c(12, 1, 2) ~ "w",
+    month(start_date) %in% c(3, 4, 5) ~ "sp",
+    month(start_date) %in% c(6, 7, 8) ~ "sum",
+    month(start_date) %in% c(9, 10, 11) ~ "aut"
+  ))
+
+## Rearrange columns
+final_df <- final_df[, c(1:4, 24, 5:23)]
+```
+
+
+```{r}
+# Recategorize employment, income, education, and working from home
+
+## Recategorize employment
+final_df <- final_df %>%
+  mutate(employment = case_when(
+    employment %in% c("employed", "self-employed") ~ "working",
+    employment %in% c("retired", "student", "other") ~ "not_working",
+    TRUE ~ NA_character_  # for any unexpected cases
+  ))
+
+
+## Recategorize income
+final_df <- final_df %>%
+  mutate(income = case_when(
+    income %in% c("<10K", "10-20K", "20-30K") ~ "low",
+    income %in% c("30-50K", "50-75K") ~ "high",
+    TRUE ~ NA_character_  # for any unexpected cases
+  ))
+
+
+## Recategorize education
+final_df <- final_df %>%
+  mutate(education = case_when(
+    education %in% c("bachelor", "master", "phd") ~ "higher_ed",
+    education %in% c("elementary", "secondary") ~ "lower_ed",
+    TRUE ~ NA_character_  # for any unexpected cases
+  ))
+
+
+## Recategorize working from home
+final_df <- final_df %>%
+  mutate(remote_work = case_when(
+    work_from_home == "0%" ~ "no",
+    work_from_home %in% c("1% - 20%", "21% - 40%", "41% - 60%") ~ "low",
+    work_from_home %in% c("61% - 80%", "81% - 100%") ~ "high",
+    TRUE ~ NA_character_  # for any unexpected cases
+  ))
+
+```
+
+
+```{r}
+# Only keep following columns: "SubjectID", "enrl_date", "start_date", "wk_day", "season", ...
+# .., "wear_t_hr", total_steps", "grn_exp", "gps_t_min", "age", "gender", "education", "employment", "income", and "remote_work" ...
+# ... and rearrange columns for clarity.
+
+final_df <- final_df[, c(1:11, 23, 13, 21, 25)]
+
+```
+
+
+```{r}
+# Rename the column 'start_date' to 'date'
+final_df <- final_df %>%
+  dplyr::rename(date = start_date)
+
+# Sort the data by 'SubjectID' and 'date' in ascending order
+final_df <- final_df %>%
+  arrange(SubjectID, date)
+
+# View the updated data
+# head(final_df)
+
+```
+
+
+```{r eval=FALSE}
+# Export final analysis-ready dataset
+# Write the final dataframe to a CSV file
+write.csv(final_df, "data/processed/pa_grnsp_sp.csv", row.names = FALSE)
+```
+
