@@ -27,42 +27,26 @@ The pipeline is fully reproducible and structured to separate **exploratory anal
 
 ## Structure
 
+```text
 greenspace-pa-data-pipeline
-
 ├── README.md
-
-├── run\_pipeline.R
-
+├── run_pipeline.R
 ├── data/
-
 │   ├── raw/               # raw data (not included)
-
 │   └── processed/         # processed data
-
 ├── R/
-
-│   ├── load\_packages.R
-
-│   ├── read\_data.R
-
-│   ├── clean\_greenspace.R
-
-│   ├── prepare\_pa\_data.R
-
-│   ├── merge\_data.R
-
-│   ├── recode\_variables.R
-
-│   └── save\_data.
-
+│   ├── load_packages.R
+│   ├── read_data.R
+│   ├── clean_greenspace.R
+│   ├── prepare_pa_data.R
+│   ├── merge_data.R
+│   ├── recode_variables.R
+│   └── save_data.
 ├── notebooks/
-
-│   └── 01\_prepare\_dataset.Rmd
-
+│   └── 01_prepare_dataset.Rmd
 └── config/
-
-&nbsp;   └── (any configuration files if needed)
-
+    └── (any configuration files if needed)
+```
 
 
 ## Reproducibility
