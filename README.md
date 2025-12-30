@@ -22,6 +22,7 @@ The dataset is **longitudinal**, collected over more than one year, with covaria
 
 - Outputs a fully processed dataset ready for downstream statistical modeling and visualization.
 <br>
+
 The pipeline is fully reproducible and structured to separate **exploratory analysis** (in notebooks) from **automated data preparation** (via scripts).
 
 ## Structure
